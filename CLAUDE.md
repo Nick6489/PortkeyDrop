@@ -79,8 +79,7 @@ own line in the commit.
 protocol parsing, transfer rules, and credential handling are tested without
 a display.
 
-`src/` and `tests/` are leftovers from the Python application. The only live
-Python is `scripts/changelog_tools.py` and its test.
+The only live Python is `scripts/changelog_tools.py` and its test in `tests/`.
 
 ## Architecture
 
