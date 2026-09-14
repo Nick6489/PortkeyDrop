@@ -4,14 +4,9 @@
 __pycache__/
 *.pyc
 .venv/
-build/
 dist/
-*.egg-info/
 .omx/
 .pytest_cache/
-.ruff_cache/
-.coverage
-cov.json
 
 # Security - credentials and keys
 .env
@@ -22,9 +17,6 @@ cov.json
 *.secret
 *.log
 .DS_Store
-
-# Auto-generated at build time by scripts/generate_build_meta.py
-src/portkeydrop/_build_meta.py
 
 # Claude Code checks worktrees out here. One was committed as a bare gitlink
 # with no .gitmodules entry, which made `git submodule foreach` fail in the
