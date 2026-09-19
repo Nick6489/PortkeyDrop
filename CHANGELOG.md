@@ -23,6 +23,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Update checks and download links now use the project's new home at Nick6489/PortkeyDrop, and the Windows installer identifies the new publisher.
+- An SFTP download that reaches EOF before receiving the server's reported size now fails with an expected-versus-received byte count instead of appearing complete. Its partial file remains available for retry in the same queue entry. Resumed downloads are checked too, and files whose size is unknown remain supported.
+- Repeating an upload or download command while that transfer is queued or running no longer creates another job for the same source and destination on the same connection. Retrying an older job also checks for an active copy first.
+- Repeating Connect while a connection is being established no longer starts competing sessions. Each connection result now carries its own client, and a cancelled attempt's late success, failure, or authentication notice cannot replace or disrupt a newer connection.
+- Backspace and the other parent-folder shortcuts now move up exactly one folder in the local file pane. A handled key event was allowed to continue into a second handler, which navigated up again. Remote navigation and the Delete and F2 commands also consume their handled key events so they cannot run twice.
 - Cancelling a transfer now also stops jobs waiting for a busy connection and interrupts folder scans and upload directory creation between operations.
 - Transfer progress no longer floods the window with duplicate updates. Disconnecting an idle session also runs off the window thread, keeping keyboard commands and closing responsive when a server is slow.
 - Idle transfer workers no longer keep the queue and its callbacks alive after their service is released.

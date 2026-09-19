@@ -95,6 +95,9 @@ pub struct TransferJob {
     /// attempts, continuing from an offset would splice two different files
     /// together.
     pub remote_mtime: Option<i64>,
+    /// Runtime-only connection identity; never persisted or used as a pointer.
+    /// Active work owns the corresponding Arc, so its address cannot be reused.
+    pub(crate) session_id: Option<usize>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -119,6 +122,7 @@ impl TransferJob {
             overwrite_existing: false,
             recursive: false,
             remote_mtime: None,
+            session_id: None,
             cancel: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -207,6 +211,7 @@ impl TransferJob {
             overwrite_existing: stored.overwrite_existing,
             recursive: stored.recursive,
             remote_mtime: None,
+            session_id: None,
             cancel: Arc::new(AtomicBool::new(false)),
         };
         job.update_progress();

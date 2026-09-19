@@ -1,5 +1,6 @@
 //! The wxWidgets front end.
 
+pub mod connection;
 pub mod dialogs;
 pub mod events;
 pub mod file_pane;

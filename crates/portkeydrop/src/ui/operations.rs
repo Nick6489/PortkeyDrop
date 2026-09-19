@@ -134,6 +134,15 @@ impl MainFrame {
 
         let mut destination = protocols::path::join(&remote_dir, &file.name);
 
+        if self.transfer_already_active(
+            client,
+            portkeydrop_core::transfer::Direction::Upload,
+            &file.path,
+            &destination,
+        ) {
+            return false;
+        }
+
         let size = if file.is_dir {
             0
         } else {
@@ -189,6 +198,15 @@ impl MainFrame {
 
         let mut destination = local_dir.join(&file.name);
 
+        if self.transfer_already_active(
+            client,
+            portkeydrop_core::transfer::Direction::Download,
+            &file.path,
+            &destination.to_string_lossy(),
+        ) {
+            return false;
+        }
+
         let overwrite = if destination.exists() {
             match self.resolve_conflict(overwrite_mode, &file.name, "downloaded", batch) {
                 Conflict::Skip => return false,
@@ -223,6 +241,25 @@ impl MainFrame {
         ));
 
         true
+    }
+
+    fn transfer_already_active(
+        &self,
+        client: &portkeydrop_core::transfer::SharedClient,
+        direction: portkeydrop_core::transfer::Direction,
+        source: &str,
+        destination: &str,
+    ) -> bool {
+        let active = self
+            .state
+            .borrow()
+            .transfers
+            .active_transfer_in_folder(client, direction, source, destination)
+            .is_some();
+        if active {
+            self.announce("That transfer is already queued or running");
+        }
+        active
     }
 
     /// Decide what to do about an existing destination.

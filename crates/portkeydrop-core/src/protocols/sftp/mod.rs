@@ -15,6 +15,9 @@
 pub mod known_hosts;
 pub mod ppk;
 
+#[cfg(test)]
+mod download_tests;
+
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -782,9 +785,20 @@ impl TransferClient for SftpClient {
                 let resolved = resolved.clone();
                 async move { session.metadata(resolved).await }
             })
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        let remaining = total.saturating_sub(offset);
+            .ok()
+            .and_then(|metadata| metadata.size);
+        // Missing metadata is not the same as a known empty file. Keep that
+        // distinction so servers that omit size remain usable, while a known
+        // size can be checked when EOF arrives.
+        if let Some(total) = total {
+            if offset > total {
+                return Err(ProtocolError::Verification(format!(
+                    "Download verification failed for {resolved}: resume offset {offset} \
+                     exceeds the remote size of {total} bytes."
+                )));
+            }
+        }
+        let remaining = total.map(|total| total - offset);
 
         let mut file = runtime
             .block_on({
@@ -812,10 +826,19 @@ impl TransferClient for SftpClient {
             sink.write_all(&buffer[..read])?;
             transferred += read as u64;
             if let Some(report) = progress.as_deref_mut() {
-                report(transferred, remaining)?;
+                report(transferred, remaining.unwrap_or(0))?;
             }
         }
         sink.flush()?;
+        if let Some(expected) = remaining {
+            if transferred != expected {
+                return Err(ProtocolError::Verification(format!(
+                    "Download verification failed for {resolved}: expected {expected} bytes \
+                     from offset {offset}, received {transferred}. The remote file may have \
+                     changed or the download ended early."
+                )));
+            }
+        }
         Ok(())
     }
 

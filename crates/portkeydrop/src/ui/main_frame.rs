@@ -65,6 +65,7 @@ pub struct MainFrame {
     pub(super) exiting: Rc<RefCell<bool>>,
     /// The update download in flight, if there is one.
     pub(super) download: Rc<RefCell<Option<Download>>>,
+    connection_attempts: Rc<RefCell<super::connection::ConnectionAttempts>>,
 }
 
 /// The quick connect bar's fields.
@@ -169,6 +170,7 @@ impl MainFrame {
             tray: Rc::new(RefCell::new(None)),
             exiting: Rc::new(RefCell::new(false)),
             download: Rc::new(RefCell::new(None)),
+            connection_attempts: Rc::new(RefCell::new(Default::default())),
         };
 
         main_frame.build_menu();
@@ -662,15 +664,17 @@ impl MainFrame {
 
     fn handle_event(&self, event: AppEvent) {
         match event {
-            AppEvent::Connected { host, cwd } => {
-                // The worker parked the client here; without collecting it the
-                // connection would look successful but nothing would be wired
-                // up to talk to.
-                let Some(client) = CONNECTED_CLIENT.take() else {
-                    self.log("The connection was lost before it could be used.");
-                    self.update_status();
+            AppEvent::Connected {
+                attempt,
+                host,
+                cwd,
+                client,
+            } => {
+                let mut client = client.0;
+                if !self.connection_attempts.borrow_mut().finish(attempt) {
+                    std::thread::spawn(move || client.disconnect());
                     return;
-                };
+                }
                 {
                     let mut state = self.state.borrow_mut();
                     state.set_client(client, host.clone());
@@ -687,12 +691,18 @@ impl MainFrame {
                 self.hide_quick_connect();
                 self.refresh_remote(&cwd);
             }
-            AppEvent::ConnectAwaitingAgent => {
+            AppEvent::ConnectAwaitingAgent { attempt } => {
+                if !self.connection_attempts.borrow().is_current(attempt) {
+                    return;
+                }
                 self.log("Waiting for SSH key approval...");
                 self.state.borrow_mut().start_waiting_sound();
                 self.announce("Waiting for SSH key approval");
             }
-            AppEvent::ConnectFailed { message } => {
+            AppEvent::ConnectFailed { attempt, message } => {
+                if !self.connection_attempts.borrow_mut().finish(attempt) {
+                    return;
+                }
                 {
                     let mut state = self.state.borrow_mut();
                     state.stop_waiting_sound();
@@ -746,16 +756,24 @@ impl MainFrame {
             AppEvent::TrayCommand(id) => self.handle_tray_command(id),
             AppEvent::Log { message } => self.log(&message),
             AppEvent::HostKeyPrompt {
+                attempt,
                 host,
                 algorithm,
                 fingerprint,
                 reply,
             } => {
+                if !self.connection_attempts.borrow().is_current(attempt) {
+                    let _ = reply.send(protocols::HostKeyDecision::Reject);
+                    return;
+                }
                 self.log(&format!(
                     "{host} offered an unrecognised {algorithm} host key ({fingerprint})."
                 ));
-                let decision =
+                let mut decision =
                     dialogs::host_key::show(&self.frame, &host, &algorithm, &fingerprint);
+                if !self.connection_attempts.borrow().is_current(attempt) {
+                    decision = protocols::HostKeyDecision::Reject;
+                }
                 if reply.send(decision).is_err() {
                     log::debug!("host key answer dropped: the connect worker has gone");
                 }
@@ -935,7 +953,15 @@ impl MainFrame {
 
     /// Connect on a worker thread.
     pub fn connect(&self, info: ConnectionInfo) {
-        self.disconnect_quietly();
+        let Some(attempt) = self.connection_attempts.borrow_mut().begin() else {
+            self.announce("A connection attempt is already in progress");
+            return;
+        };
+        {
+            let mut state = self.state.borrow_mut();
+            state.stop_waiting_sound();
+            state.clear_client();
+        }
         let endpoint = info.endpoint();
         self.log(&format!("Connecting to {endpoint}..."));
         self.status_bar
@@ -950,14 +976,14 @@ impl MainFrame {
         let prompt_sender = sender.clone();
         let host_key_prompt: protocols::HostKeyPrompt =
             Arc::new(move |host: &str, algorithm: &str, fingerprint: &str| {
-                events::ask_host_key(&prompt_sender, host, algorithm, fingerprint)
+                events::ask_host_key(&prompt_sender, attempt, host, algorithm, fingerprint)
             });
         // SFTP auth talks to the SSH agent on this worker; an external agent
         // can then put up a dialog behind the window. This tells the UI to
         // start the "waiting to connect" cue.
         let notice_sender = sender.clone();
         let agent_notice: protocols::AgentAuthNotice =
-            Arc::new(move || events::notify_awaiting_agent(&notice_sender));
+            Arc::new(move || events::notify_awaiting_agent(&notice_sender, attempt));
 
         std::thread::spawn(move || {
             let result = protocols::create_client(info, Some(host_key_prompt), Some(agent_notice))
@@ -967,19 +993,19 @@ impl MainFrame {
                     let cwd = client.cwd().to_string();
                     events::post(
                         &sender,
-                        AppEvent::Log {
-                            message: format!("Connected to {host}."),
+                        AppEvent::Connected {
+                            attempt,
+                            host,
+                            cwd,
+                            client: events::ConnectedClient(client),
                         },
                     );
-                    // The client itself cannot cross the channel, so it is
-                    // handed over through a dedicated message.
-                    CONNECTED_CLIENT.with_client(client);
-                    events::post(&sender, AppEvent::Connected { host, cwd });
                 }
                 Err(err) => {
                     events::post(
                         &sender,
                         AppEvent::ConnectFailed {
+                            attempt,
                             message: err.to_string(),
                         },
                     );
@@ -989,7 +1015,8 @@ impl MainFrame {
     }
 
     fn disconnect(&self) {
-        if !self.state.borrow().is_connected() {
+        let connecting = self.connection_attempts.borrow_mut().cancel();
+        if !connecting && !self.state.borrow().is_connected() {
             self.announce("Not connected");
             return;
         }
@@ -1002,6 +1029,7 @@ impl MainFrame {
     }
 
     pub(super) fn disconnect_quietly(&self) {
+        self.connection_attempts.borrow_mut().cancel();
         let mut state = self.state.borrow_mut();
         state.stop_waiting_sound();
         state.clear_client();
@@ -1155,11 +1183,18 @@ impl MainFrame {
                 return;
             }
         };
+        let Some(command) = command else {
+            event.skip(true);
+            return;
+        };
+        // wxDragon starts each callback with Skip(true). Explicitly consume
+        // handled keys before acting, or KEY_DOWN can also generate CHAR and
+        // run the command twice (local navigation updates the path at once).
+        event.skip(false);
         match command {
-            Some(keys::ListCommand::Delete) => self.delete_selection(),
-            Some(keys::ListCommand::Rename) => self.rename_selection(),
-            Some(keys::ListCommand::Parent) => self.go_parent_in(side),
-            None => event.skip(true),
+            keys::ListCommand::Delete => self.delete_selection(),
+            keys::ListCommand::Rename => self.rename_selection(),
+            keys::ListCommand::Parent => self.go_parent_in(side),
         }
     }
 
@@ -1632,6 +1667,7 @@ impl MainFrame {
     /// Shut down for real, bypassing minimise-to-tray.
     pub(super) fn force_exit(&self) {
         *self.exiting.borrow_mut() = true;
+        self.connection_attempts.borrow_mut().cancel();
         self.on_close();
         self.frame.close(true);
     }
@@ -1690,54 +1726,9 @@ pub(super) struct Download {
     pub(super) announced: Option<u8>,
 }
 
-/// A hand-off slot for a connected client.
-///
-/// A `Box<dyn TransferClient>` cannot travel through the event channel (the
-/// events are `Debug`, and a client is not), so the worker thread parks the
-/// client here and the UI picks it up when the matching event arrives.
-mod client_handoff {
-    use std::sync::{Mutex, OnceLock};
-
-    use portkeydrop_core::protocols::TransferClient;
-
-    pub struct Slot;
-
-    fn slot() -> &'static Mutex<Option<Box<dyn TransferClient>>> {
-        static SLOT: OnceLock<Mutex<Option<Box<dyn TransferClient>>>> = OnceLock::new();
-        SLOT.get_or_init(|| Mutex::new(None))
-    }
-
-    impl Slot {
-        /// Park a freshly connected client.
-        pub fn with_client(&self, client: Box<dyn TransferClient>) {
-            if let Ok(mut slot) = slot().lock() {
-                *slot = Some(client);
-            }
-        }
-
-        /// Take the parked client, if there is one.
-        pub fn take(&self) -> Option<Box<dyn TransferClient>> {
-            slot().lock().ok()?.take()
-        }
-    }
-}
-
-use client_handoff::Slot as ClientSlot;
-
-/// The process-wide hand-off slot.
-const CONNECTED_CLIENT: ClientSlot = ClientSlot;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_parked_client_is_taken_exactly_once() {
-        // The slot is how a connected client crosses from the worker thread to
-        // the UI; taking it twice would hand out a connection that is already
-        // in use.
-        assert!(CONNECTED_CLIENT.take().is_none());
-    }
 
     #[test]
     fn the_two_sides_are_distinct() {

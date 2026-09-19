@@ -11,21 +11,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
-use portkeydrop_core::protocols::{HostKeyDecision, RemoteFile};
+use portkeydrop_core::protocols::{HostKeyDecision, RemoteFile, TransferClient};
 use portkeydrop_core::updater::UpdateInfo;
 
 /// Something that happened away from the UI thread.
 #[derive(Debug)]
 pub enum AppEvent {
-    /// A connection attempt succeeded; the client is already stored.
-    Connected { host: String, cwd: String },
+    /// A connection attempt succeeded; the event owns that attempt's client.
+    Connected {
+        attempt: u64,
+        host: String,
+        cwd: String,
+        client: ConnectedClient,
+    },
     /// A connection attempt failed.
-    ConnectFailed { message: String },
+    ConnectFailed { attempt: u64, message: String },
     /// SFTP authentication is about to ask the SSH agent to sign, which can
     /// make an external agent (Bitwarden, a smartcard) pop a dialog behind the
     /// window. The UI starts the "waiting to connect" cue; `Connected` or
     /// `ConnectFailed` stops it.
-    ConnectAwaitingAgent,
+    ConnectAwaitingAgent { attempt: u64 },
     /// A remote listing finished.
     RemoteListed {
         path: String,
@@ -68,11 +73,22 @@ pub enum AppEvent {
     /// without answering is a rejection: that is the safe choice if the
     /// window has gone.
     HostKeyPrompt {
+        attempt: u64,
         host: String,
         algorithm: String,
         fingerprint: String,
         reply: Sender<HostKeyDecision>,
     },
+}
+
+/// Carry a client through the channel without requiring protocol internals
+/// (or credentials) to implement Debug.
+pub struct ConnectedClient(pub Box<dyn TransferClient>);
+
+impl std::fmt::Debug for ConnectedClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectedClient")
+    }
 }
 
 /// The result of an update check.
@@ -167,8 +183,8 @@ pub fn drain(receiver: &EventReceiver) -> Vec<AppEvent> {
 ///
 /// Fire-and-forget: unlike [`ask_host_key`] the worker does not wait for a
 /// reply, it just carries on trying to authenticate.
-pub fn notify_awaiting_agent(sender: &EventSender) {
-    post(sender, AppEvent::ConnectAwaitingAgent);
+pub fn notify_awaiting_agent(sender: &EventSender, attempt: u64) {
+    post(sender, AppEvent::ConnectAwaitingAgent { attempt });
 }
 
 /// Ask the UI thread what to do about an untrusted host key.
@@ -177,6 +193,7 @@ pub fn notify_awaiting_agent(sender: &EventSender) {
 /// the channel is closed and the key is refused.
 pub fn ask_host_key(
     sender: &EventSender,
+    attempt: u64,
     host: &str,
     algorithm: &str,
     fingerprint: &str,
@@ -185,6 +202,7 @@ pub fn ask_host_key(
     post(
         sender,
         AppEvent::HostKeyPrompt {
+            attempt,
             host: host.to_string(),
             algorithm: algorithm.to_string(),
             fingerprint: fingerprint.to_string(),
@@ -306,9 +324,9 @@ mod tests {
         std::thread::spawn(move || {
             post(
                 &sender,
-                AppEvent::Connected {
-                    host: "h".into(),
-                    cwd: "/".into(),
+                AppEvent::ConnectFailed {
+                    attempt: 7,
+                    message: "test".into(),
                 },
             );
         })
@@ -316,16 +334,78 @@ mod tests {
         .unwrap();
 
         let events = drain(&receiver);
-        assert!(matches!(events.first(), Some(AppEvent::Connected { .. })));
+        assert!(matches!(
+            events.first(),
+            Some(AppEvent::ConnectFailed { attempt: 7, .. })
+        ));
+    }
+
+    #[test]
+    fn connection_results_keep_their_own_clients_when_queued_together() {
+        use portkeydrop_core::protocols::{create_client, ConnectionInfo, Protocol};
+        let (sender, receiver) = channel();
+        std::thread::spawn(move || {
+            for (attempt, protocol, host) in
+                [(2, Protocol::Ftp, "second"), (1, Protocol::Sftp, "first")]
+            {
+                let client = create_client(
+                    ConnectionInfo {
+                        protocol,
+                        host: host.into(),
+                        ..Default::default()
+                    },
+                    None,
+                    None,
+                )
+                .unwrap();
+                post(
+                    &sender,
+                    AppEvent::Connected {
+                        attempt,
+                        host: host.into(),
+                        cwd: "/".into(),
+                        client: ConnectedClient(client),
+                    },
+                );
+            }
+        })
+        .join()
+        .unwrap();
+        let mut attempts = super::super::connection::ConnectionAttempts::default();
+        assert_eq!(attempts.begin(), Some(1));
+        attempts.cancel();
+        assert_eq!(attempts.begin(), Some(2));
+        let results = drain(&receiver);
+        assert_eq!(results.len(), 2);
+        for event in results {
+            let AppEvent::Connected {
+                attempt,
+                host,
+                client,
+                ..
+            } = event
+            else {
+                panic!("expected a connection result")
+            };
+            if attempt == 2 {
+                assert_eq!(host, "second");
+                assert_eq!(client.0.protocol(), Protocol::Ftp);
+                assert!(attempts.finish(attempt));
+            } else {
+                assert_eq!(host, "first");
+                assert_eq!(client.0.protocol(), Protocol::Sftp);
+                assert!(!attempts.finish(attempt));
+            }
+        }
     }
 
     #[test]
     fn an_agent_notice_is_posted_without_waiting_for_a_reply() {
         let (sender, receiver) = channel();
-        notify_awaiting_agent(&sender);
+        notify_awaiting_agent(&sender, 7);
         assert!(matches!(
             drain(&receiver).first(),
-            Some(AppEvent::ConnectAwaitingAgent)
+            Some(AppEvent::ConnectAwaitingAgent { attempt: 7 })
         ));
     }
 
@@ -336,16 +416,18 @@ mod tests {
         // display.
         let (sender, receiver) = channel();
         let worker = std::thread::spawn(move || {
-            ask_host_key(&sender, "example.com", "ssh-ed25519", "SHA256:abc")
+            ask_host_key(&sender, 7, "example.com", "ssh-ed25519", "SHA256:abc")
         });
 
         match receiver.receiver.recv().expect("the prompt is posted") {
             AppEvent::HostKeyPrompt {
+                attempt,
                 host,
                 algorithm,
                 fingerprint,
                 reply,
             } => {
+                assert_eq!(attempt, 7);
                 assert_eq!(host, "example.com");
                 assert_eq!(algorithm, "ssh-ed25519");
                 assert_eq!(fingerprint, "SHA256:abc");
@@ -368,7 +450,7 @@ mod tests {
         // must not accept the key.
         let (sender, receiver) = channel();
         let worker = std::thread::spawn(move || {
-            ask_host_key(&sender, "example.com", "ssh-ed25519", "SHA256:abc")
+            ask_host_key(&sender, 7, "example.com", "ssh-ed25519", "SHA256:abc")
         });
 
         let event = receiver.receiver.recv().expect("the prompt is posted");
