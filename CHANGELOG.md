@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - A "Waiting to connect" cue now loops while an SFTP connection is held up waiting for your SSH agent to approve the key. Agents such as Bitwarden show that approval in a box that can open behind the Portkey Drop window with nothing to say it is there; the sound fills that gap and stops the moment the connection succeeds or fails. Give it a sound by adding a `connect_waiting` entry to a sound pack, and mute it in Settings like any other cue.
 
 ### Fixed
+- Update checks and download links now use the project's new home at Nick6489/PortkeyDrop, and the Windows installer identifies the new publisher.
 - Cancelling a transfer now also stops jobs waiting for a busy connection and interrupts folder scans and upload directory creation between operations.
 - Transfer progress no longer floods the window with duplicate updates. Disconnecting an idle session also runs off the window thread, keeping keyboard commands and closing responsive when a server is slow.
 - Idle transfer workers no longer keep the queue and its callbacks alive after their service is released.

@@ -23,7 +23,7 @@ pub use release::{
 use sha2::{Digest, Sha256, Sha512};
 
 /// Repository the updater checks.
-pub const GITHUB_OWNER: &str = "Orinks";
+pub const GITHUB_OWNER: &str = "Nick6489";
 pub const GITHUB_REPO: &str = "PortkeyDrop";
 
 /// How many releases to fetch when looking for an update.
@@ -291,21 +291,23 @@ mod tests {
     use tempfile::TempDir;
 
     fn service() -> UpdateService {
-        UpdateService::for_repository("Orinks", "PortkeyDrop").unwrap()
+        UpdateService::new().unwrap()
     }
 
     #[test]
     fn the_releases_url_names_the_repository() {
         let url = service().releases_url();
-        assert!(url.contains("Orinks/PortkeyDrop"));
-        assert!(url.contains("per_page=20"));
+        assert_eq!(
+            url,
+            "https://api.github.com/repos/Nick6489/PortkeyDrop/releases?per_page=20"
+        );
     }
 
     #[test]
     fn the_releases_page_url_is_a_link_a_user_can_open() {
         assert_eq!(
             service().releases_page_url(),
-            "https://github.com/Orinks/PortkeyDrop/releases"
+            "https://github.com/Nick6489/PortkeyDrop/releases"
         );
     }
 
