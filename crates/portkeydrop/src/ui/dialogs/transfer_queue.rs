@@ -174,7 +174,7 @@ pub fn show(frame: &MainFrame) {
                 prompts::info(
                     &dialog,
                     "Cannot retry",
-                    "Only a failed or restored transfer can be retried.",
+                    "Only a failed or restored transfer can be retried, and the same transfer must not already be queued or running.",
                 );
             }
             refresh();

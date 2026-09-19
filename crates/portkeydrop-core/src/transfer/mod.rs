@@ -104,6 +104,51 @@ impl TransferService {
             .cloned()
     }
 
+    /// Find an identical pending or running transfer on this connection.
+    /// This never waits for the protocol client, which may be busy transferring.
+    pub fn active_transfer(
+        &self,
+        client: &SharedClient,
+        direction: Direction,
+        source: &str,
+        destination: &str,
+    ) -> Option<String> {
+        let jobs = self.jobs.lock().ok()?;
+        find_active_transfer(&jobs, client, direction, source, destination)
+    }
+
+    /// Check a repeated file-pane command before choosing an automatic rename.
+    /// A running copy in the same folder must not become "file (2)" just
+    /// because its first attempt already created "file (1)" on disk.
+    pub fn active_transfer_in_folder(
+        &self,
+        client: &SharedClient,
+        direction: Direction,
+        source: &str,
+        destination: &str,
+    ) -> Option<String> {
+        let session_id = Some(Arc::as_ptr(client) as usize);
+        let jobs = self.jobs.lock().ok()?;
+        jobs.iter()
+            .find(|job| {
+                matches!(job.status, Status::Pending | Status::InProgress)
+                    && job.session_id == session_id
+                    && job.direction == direction
+                    && job.source == source
+                    && match direction {
+                        Direction::Download => {
+                            std::path::Path::new(&job.destination).parent()
+                                == std::path::Path::new(destination).parent()
+                        }
+                        Direction::Upload => {
+                            remote_path::parent(&job.destination)
+                                == remote_path::parent(destination)
+                        }
+                    }
+            })
+            .map(|job| job.id.clone())
+    }
+
     /// How many jobs are queued or running.
     pub fn active_count(&self) -> usize {
         self.jobs
@@ -240,16 +285,33 @@ impl TransferService {
     /// resume rather than start over.
     pub fn retry(&self, job_id: &str, client: SharedClient) -> bool {
         let ready = match self.jobs.lock() {
-            Ok(mut jobs) => match jobs.iter_mut().find(|job| job.id == job_id) {
-                Some(job) if job.status == Status::Failed || job.status == Status::Restored => {
-                    job.status = Status::Pending;
-                    job.error = None;
-                    job.progress = 0;
-                    job.clear_cancel();
-                    true
+            Ok(mut jobs) => {
+                let Some(job) = jobs.iter().find(|job| job.id == job_id) else {
+                    return false;
+                };
+                if find_active_transfer(
+                    &jobs,
+                    &client,
+                    job.direction,
+                    &job.source,
+                    &job.destination,
+                )
+                .is_some()
+                {
+                    return false;
                 }
-                _ => false,
-            },
+                match jobs.iter_mut().find(|job| job.id == job_id) {
+                    Some(job) if job.status == Status::Failed || job.status == Status::Restored => {
+                        job.status = Status::Pending;
+                        job.error = None;
+                        job.progress = 0;
+                        job.clear_cancel();
+                        job.session_id = Some(Arc::as_ptr(&client) as usize);
+                        true
+                    }
+                    _ => false,
+                }
+            }
             Err(_) => false,
         };
         if !ready {
@@ -286,9 +348,17 @@ impl TransferService {
     // Internals
     // ---------------------------------------------------------------
 
-    fn enqueue(&self, job: TransferJob, client: SharedClient) -> String {
+    fn enqueue(&self, mut job: TransferJob, client: SharedClient) -> String {
         let job_id = job.id.clone();
         if let Ok(mut jobs) = self.jobs.lock() {
+            // Check and insert under one lock: concurrent submissions must
+            // return the same ID and schedule exactly one worker invocation.
+            if let Some(id) =
+                find_active_transfer(&jobs, &client, job.direction, &job.source, &job.destination)
+            {
+                return id;
+            }
+            job.session_id = Some(Arc::as_ptr(&client) as usize);
             jobs.push(job);
         }
         let _ = self.sender.send(QueuedWork {
@@ -680,6 +750,25 @@ impl TransferService {
         }
         Ok(())
     }
+}
+
+fn find_active_transfer(
+    jobs: &[TransferJob],
+    client: &SharedClient,
+    direction: Direction,
+    source: &str,
+    destination: &str,
+) -> Option<String> {
+    let session_id = Some(Arc::as_ptr(client) as usize);
+    jobs.iter()
+        .find(|job| {
+            matches!(job.status, Status::Pending | Status::InProgress)
+                && job.session_id == session_id
+                && job.direction == direction
+                && job.source == source
+                && job.destination == destination
+        })
+        .map(|job| job.id.clone())
 }
 
 impl Drop for TransferService {
@@ -1216,6 +1305,133 @@ mod tests {
             on_change: Arc::new(Mutex::new(None)),
             resume_enabled: Arc::new(AtomicBool::new(true)),
         })
+    }
+
+    fn submit_test_transfer(
+        service: &TransferService,
+        client: SharedClient,
+        direction: Direction,
+    ) -> String {
+        match direction {
+            Direction::Download => {
+                service.submit_download(client, "/source", "/destination", 90, false, true)
+            }
+            Direction::Upload => {
+                service.submit_upload(client, "/source", "/destination", 90, false, true)
+            }
+        }
+    }
+
+    #[test]
+    fn simultaneous_duplicate_submissions_schedule_one_transfer_in_either_direction() {
+        for direction in [Direction::Download, Direction::Upload] {
+            let service = manual_service();
+            let client: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+            // Also verify submissions never wait on a busy protocol session.
+            let guard = client.lock().unwrap();
+            let barrier = Arc::new(std::sync::Barrier::new(8));
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    let service = Arc::clone(&service);
+                    let client = Arc::clone(&client);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        submit_test_transfer(&service, client, direction)
+                    })
+                })
+                .collect();
+            let ids: Vec<_> = workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect();
+            assert!(ids.iter().all(|id| id == &ids[0]));
+            assert_eq!(service.jobs().len(), 1);
+            assert_eq!(service.receiver.lock().unwrap().try_iter().count(), 1);
+            service.with_job(&ids[0], |job| {
+                job.status = Status::InProgress;
+                job.transferred_bytes = 45;
+            });
+            assert_eq!(
+                submit_test_transfer(&service, Arc::clone(&client), direction),
+                ids[0]
+            );
+            assert_eq!(service.job(&ids[0]).unwrap().transferred_bytes, 45);
+            assert!(service.receiver.lock().unwrap().try_recv().is_err());
+            drop(guard);
+        }
+    }
+
+    #[test]
+    fn distinct_sessions_directions_and_destinations_remain_separate() {
+        let service = manual_service();
+        let a: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+        let b: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+        submit_test_transfer(&service, Arc::clone(&a), Direction::Download);
+        submit_test_transfer(&service, Arc::clone(&b), Direction::Download);
+        submit_test_transfer(&service, Arc::clone(&a), Direction::Upload);
+        service.submit_download(a, "/source", "/other", 90, false, true);
+        assert_eq!(service.jobs().len(), 4);
+        assert_eq!(service.receiver.lock().unwrap().try_iter().count(), 4);
+    }
+
+    #[test]
+    fn repeated_pane_commands_find_automatically_renamed_transfers() {
+        for direction in [Direction::Download, Direction::Upload] {
+            let service = manual_service();
+            let client: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+            let mut job = TransferJob::new(direction, "/source", "/folder/file (1)");
+            job.recursive = true;
+            let id = service.enqueue(job, Arc::clone(&client));
+            assert_eq!(
+                service.active_transfer_in_folder(&client, direction, "/source", "/folder/file"),
+                Some(id)
+            );
+            assert_eq!(
+                service.active_transfer_in_folder(&client, direction, "/source", "/elsewhere/file"),
+                None
+            );
+            assert_eq!(
+                service.active_transfer_in_folder(
+                    &client,
+                    direction,
+                    "/other-source",
+                    "/folder/file"
+                ),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn finished_transfers_do_not_prevent_a_later_submission() {
+        for direction in [Direction::Download, Direction::Upload] {
+            for status in [Status::Complete, Status::Failed, Status::Cancelled] {
+                let service = manual_service();
+                let client: SharedClient =
+                    Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+                let old = submit_test_transfer(&service, Arc::clone(&client), direction);
+                service.with_job(&old, |job| job.status = status);
+                assert_ne!(old, submit_test_transfer(&service, client, direction));
+                assert_eq!(service.jobs().len(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn retry_cannot_duplicate_an_active_transfer() {
+        for direction in [Direction::Download, Direction::Upload] {
+            let service = manual_service();
+            let client: SharedClient = Arc::new(Mutex::new(Box::new(FakeRemote::with_budget(0))));
+            let failed = submit_test_transfer(&service, Arc::clone(&client), direction);
+            service.with_job(&failed, |job| job.status = Status::Failed);
+            let active = submit_test_transfer(&service, Arc::clone(&client), direction);
+            assert!(!service.retry(&failed, Arc::clone(&client)));
+            assert_eq!(service.job(&failed).unwrap().status, Status::Failed);
+            service.with_job(&active, |job| job.status = Status::Complete);
+            assert!(service.retry(&failed, Arc::clone(&client)));
+            assert_eq!(submit_test_transfer(&service, client, direction), failed);
+        }
     }
 
     fn assert_busy_batch_queues(direction: Direction, recursive: [bool; 2]) {
