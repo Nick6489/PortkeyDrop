@@ -57,17 +57,20 @@ Saved connection passwords are stored in your system's secure keyring (Windows C
 
 ## Install
 
-Packaged builds for Windows (installer and portable ZIP), macOS, and Linux (tarball and AppImage) are published on the [releases page](https://github.com/Orinks/PortkeyDrop/releases). On Linux, download the AppImage, mark it executable (`chmod +x PortkeyDrop-*.AppImage`), and run it.
+Packaged builds for Windows (installer and portable ZIP) and macOS are published on the [releases page](https://github.com/Nick6489/PortkeyDrop/releases). Linux downloads are currently paused while packaging compatibility is repaired; older releases may still have Linux assets.
 
 To run from source you need a Rust toolchain (1.85 or newer) and a C++ compiler, since wxWidgets is built from source on first compile.
 
 ```bash
-git clone https://github.com/Orinks/PortkeyDrop.git
+git clone https://github.com/Nick6489/PortkeyDrop.git
 cd PortkeyDrop
 cargo run --release
 ```
 
 ## Development
+
+Start changes from `dev` and open pull requests against `dev`. See the
+[maintainer guide](docs/maintaining.md) for checks, nightly builds, and release promotion.
 
 ```bash
 cargo test            # Run the test suite

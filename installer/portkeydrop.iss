@@ -20,8 +20,8 @@
     #error Missing dist/version.txt; write it from Cargo.toml, or pass /DMyAppVersion, before compiling the installer.
   #endif
 #endif
-#define MyAppPublisher "Orinks"
-#define MyAppURL "https://github.com/Orinks/PortkeyDrop"
+#define MyAppPublisher "Nick6489"
+#define MyAppURL "https://github.com/Nick6489/PortkeyDrop"
 #define MyAppExeName "PortkeyDrop.exe"
 #define MyAppDescription "An accessible file transfer client for FTP, SFTP, FTPS, SCP, and WebDAV"
 

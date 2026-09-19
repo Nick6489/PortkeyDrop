@@ -12,7 +12,7 @@ version = "0.6.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/Orinks/PortkeyDrop"
+repository = "https://github.com/Nick6489/PortkeyDrop"
 authors = ["Portkey Drop contributors"]
 
 [workspace.dependencies]
