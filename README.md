@@ -79,14 +79,14 @@ cargo clippy          # Lints
 cargo fmt             # Format
 ```
 
-The workspace is four crates:
+The workspace is two crates:
 
 | Crate | Contents |
 |---|---|
 | `portkeydrop` | The wxWidgets front end: window, panes, dialogs |
 | `portkeydrop-core` | Protocols, transfers, settings, sites, sound packs, updates |
-| `prism` | Safe wrapper over the Prism speech library |
-| `prism-sys` | Raw FFI to Prism's C API, with the platform binaries vendored |
+
+Speech uses the `prismer` crate, which builds the Prism library.
 
 `portkeydrop-core` has no UI dependency, so protocol parsing, transfer rules, and
 credential handling are all tested without a display.

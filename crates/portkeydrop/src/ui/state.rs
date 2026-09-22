@@ -25,7 +25,7 @@ pub struct AppState {
     /// The looping "waiting to connect" cue, while a connection attempt is
     /// stalled on an external SSH-agent dialog. Dropping it stops the sound.
     waiting_sound: Option<LoopHandle>,
-    pub announcer: prism::Announcer,
+    pub announcer: crate::speech::Announcer,
     /// The live connection, if any.
     client: Option<SharedClient>,
     /// Host of the live connection, for the status bar.
@@ -49,7 +49,7 @@ pub struct AppState {
 impl AppState {
     /// Build the state for a config directory.
     pub fn new(config_dir: PathBuf, portable: bool) -> Self {
-        Self::build(config_dir, portable, prism::Announcer::new(), true)
+        Self::build(config_dir, portable, crate::speech::Announcer::new(), true)
     }
 
     /// The same state with speech and event sounds turned off.
@@ -58,13 +58,18 @@ impl AppState {
     /// settings, sites, and sound pack handling.
     #[cfg(test)]
     pub fn silent(config_dir: PathBuf, portable: bool) -> Self {
-        Self::build(config_dir, portable, prism::Announcer::disabled(), false)
+        Self::build(
+            config_dir,
+            portable,
+            crate::speech::Announcer::disabled(),
+            false,
+        )
     }
 
     fn build(
         config_dir: PathBuf,
         portable: bool,
-        mut announcer: prism::Announcer,
+        mut announcer: crate::speech::Announcer,
         audible: bool,
     ) -> Self {
         let settings = portkeydrop_core::settings::load_settings(&config_dir);
@@ -177,9 +182,23 @@ impl AppState {
         self.waiting_sound = None;
     }
 
-    /// Speak a message, if speech is available.
+    /// Speak a message when the speech settings say to.
+    ///
+    /// A system voice stays silent until the user has opted in. The startup
+    /// question itself must not call this.
     pub fn announce(&mut self, message: &str) {
+        if !self.announcements_enabled() {
+            return;
+        }
         self.announcer.announce(message);
+    }
+
+    /// Whether the next announcement would be spoken.
+    pub fn announcements_enabled(&self) -> bool {
+        self.settings.speech.announcements_enabled(
+            self.announcer.is_screen_reader(),
+            self.announcer.has_backend(),
+        )
     }
 
     /// Where saved passwords are kept, phrased for the activity log.

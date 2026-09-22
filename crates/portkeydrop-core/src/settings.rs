@@ -128,10 +128,26 @@ impl Default for ConnectionDefaults {
     }
 }
 
+/// Stored values for [`SpeechSettings::backend`].
+pub mod speech_backend {
+    /// Never speak, even when a screen reader is running.
+    pub const OFF: &str = "off";
+    /// Speak only through a screen reader. A system voice is not used.
+    pub const SCREEN_READER: &str = "screen_reader";
+    /// A screen reader when one is running, otherwise a system voice.
+    pub const AUTOMATIC: &str = "automatic";
+}
+
 /// Speech output tuning, in 0–100 units.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpeechSettings {
+    /// One of [`speech_backend`]. Anything else is treated as automatic.
+    pub backend: String,
+    /// Set once the user has chosen a backend, including by answering the
+    /// startup question. Until then, automatic does not speak through a
+    /// system voice.
+    pub backend_chosen: bool,
     pub rate: i32,
     pub volume: i32,
     /// One of `minimal`, `normal`, `verbose`.
@@ -141,11 +157,89 @@ pub struct SpeechSettings {
 impl Default for SpeechSettings {
     fn default() -> Self {
         Self {
+            backend: speech_backend::AUTOMATIC.to_string(),
+            backend_chosen: false,
             rate: 50,
             volume: 100,
             verbosity: "normal".to_string(),
         }
     }
+}
+
+impl SpeechSettings {
+    /// The backend preference, with an unknown stored value read as automatic.
+    pub fn backend_preference(&self) -> &str {
+        match self.backend.as_str() {
+            speech_backend::OFF | speech_backend::SCREEN_READER | speech_backend::AUTOMATIC => {
+                self.backend.as_str()
+            }
+            _ => speech_backend::AUTOMATIC,
+        }
+    }
+
+    /// Whether announcements should reach a backend.
+    ///
+    /// A system voice is used only after the user has chosen automatic.
+    /// Leaving the preference untouched, which is what an existing settings
+    /// file looks like, does not speak through one.
+    pub fn announcements_enabled(&self, screen_reader: bool, has_backend: bool) -> bool {
+        if !has_backend {
+            return false;
+        }
+        match self.backend_preference() {
+            speech_backend::OFF => false,
+            speech_backend::SCREEN_READER => screen_reader,
+            _ => screen_reader || self.backend_chosen,
+        }
+    }
+
+    /// Whether to ask about spoken progress through a system voice.
+    ///
+    /// Asked once, and only when nothing is speaking through a screen reader.
+    pub fn offer_spoken_progress(&self, screen_reader: bool, has_backend: bool) -> bool {
+        has_backend
+            && !screen_reader
+            && !self.backend_chosen
+            && self.backend_preference() != speech_backend::OFF
+    }
+
+    /// Record the answer to the spoken-progress question.
+    pub fn answer_spoken_progress(&mut self, yes: bool) {
+        self.backend_chosen = true;
+        self.backend = if yes {
+            speech_backend::AUTOMATIC.to_string()
+        } else {
+            speech_backend::SCREEN_READER.to_string()
+        };
+    }
+}
+
+/// Whether `name` is a screen reader rather than a text-to-speech engine.
+///
+/// Prism names its own backends ("NVDA", "SAPI", "VoiceOver (macOS)"). A
+/// voice such as SAPI, OneCore, or AVSpeech is not a screen reader, and
+/// speaking through it is a choice rather than the default.
+pub fn is_screen_reader_backend(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    const READERS: &[&str] = &[
+        "nvda",
+        "jaws",
+        "voiceover",
+        "orca",
+        "zoomtext",
+        "zdsr",
+        "sensereader",
+        "system access",
+        "window-eyes",
+        "windoweyes",
+        "uia",
+        "pc-talker",
+        "boypcreader",
+        "talkback",
+    ];
+    READERS
+        .iter()
+        .any(|reader| name == *reader || name.starts_with(&format!("{reader} ")))
 }
 
 /// Sound pack selection and per-event muting.
@@ -356,6 +450,8 @@ mod tests {
         assert_eq!(settings.display.progress_interval, 25);
         assert_eq!(settings.connection.protocol, "sftp");
         assert_eq!(settings.connection.timeout, 30);
+        assert_eq!(settings.speech.backend, speech_backend::AUTOMATIC);
+        assert!(!settings.speech.backend_chosen);
         assert_eq!(settings.speech.rate, 50);
         assert_eq!(settings.speech.volume, 100);
         assert!(settings.audio.sound_enabled);
@@ -384,8 +480,60 @@ mod tests {
         assert_eq!(settings.speech.rate, 80);
         // Untouched fields in the same section keep their defaults...
         assert_eq!(settings.speech.volume, 100);
+        assert_eq!(settings.speech.backend, speech_backend::AUTOMATIC);
+        assert!(!settings.speech.backend_chosen);
         // ...as do entirely absent sections.
         assert_eq!(settings.connection.protocol, "sftp");
+    }
+
+    #[test]
+    fn an_unanswered_automatic_preference_does_not_speak_through_a_voice() {
+        let speech = SpeechSettings::default();
+        assert!(!speech.announcements_enabled(false, true));
+        assert!(speech.offer_spoken_progress(false, true));
+        // A screen reader is used without asking.
+        assert!(speech.announcements_enabled(true, true));
+        assert!(!speech.offer_spoken_progress(true, true));
+        // Nothing to speak through means no question either.
+        assert!(!speech.offer_spoken_progress(false, false));
+    }
+
+    #[test]
+    fn the_spoken_progress_answer_is_remembered() {
+        let mut speech = SpeechSettings::default();
+        speech.answer_spoken_progress(false);
+        assert_eq!(speech.backend, speech_backend::SCREEN_READER);
+        assert!(speech.backend_chosen);
+        assert!(!speech.announcements_enabled(false, true));
+        assert!(speech.announcements_enabled(true, true));
+        assert!(!speech.offer_spoken_progress(false, true));
+
+        speech.answer_spoken_progress(true);
+        assert_eq!(speech.backend, speech_backend::AUTOMATIC);
+        assert!(speech.announcements_enabled(false, true));
+    }
+
+    #[test]
+    fn turning_speech_off_silences_a_screen_reader_too() {
+        let speech = SpeechSettings {
+            backend: speech_backend::OFF.to_string(),
+            backend_chosen: true,
+            ..SpeechSettings::default()
+        };
+        assert!(!speech.announcements_enabled(true, true));
+        assert!(!speech.offer_spoken_progress(false, true));
+    }
+
+    #[test]
+    fn screen_reader_names_are_not_system_voices() {
+        assert!(is_screen_reader_backend("NVDA"));
+        assert!(is_screen_reader_backend("JAWS"));
+        assert!(is_screen_reader_backend("VoiceOver (macOS)"));
+        assert!(is_screen_reader_backend("Orca"));
+        assert!(!is_screen_reader_backend("SAPI"));
+        assert!(!is_screen_reader_backend("OneCore"));
+        assert!(!is_screen_reader_backend("AVSpeech"));
+        assert!(!is_screen_reader_backend("speech-dispatcher"));
     }
 
     #[test]

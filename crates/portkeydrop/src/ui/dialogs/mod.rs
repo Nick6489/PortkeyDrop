@@ -11,6 +11,7 @@ pub mod properties;
 pub mod settings;
 pub mod site_manager;
 pub mod soundpacks;
+pub mod speech_prompt;
 pub mod transfer_queue;
 pub mod update;
 

@@ -817,10 +817,16 @@ impl MainFrame {
             "installed"
         };
 
-        let speech = state
-            .announcer
-            .backend_name()
-            .unwrap_or_else(|| "not available".to_string());
+        let speech = if !state.announcer.has_backend() {
+            "not available".to_string()
+        } else if state.announcements_enabled() {
+            state
+                .announcer
+                .backend_name()
+                .unwrap_or_else(|| "not available".to_string())
+        } else {
+            "off".to_string()
+        };
 
         let text = [
             portkeydrop_core::APP_NAME.to_string(),

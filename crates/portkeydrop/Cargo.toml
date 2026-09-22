@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 portkeydrop-core = { path = "../portkeydrop-core" }
-prism = { path = "../prism" }
+prismer = { version = "0.1", features = ["static"] }
 wxdragon = "0.9"
 anyhow.workspace = true
 log.workspace = true
