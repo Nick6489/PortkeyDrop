@@ -185,7 +185,7 @@ impl MainFrame {
         {
             let state = main_frame.state.borrow();
             state.play_sound("startup");
-            if !state.announcer.is_available() {
+            if !state.announcer.has_backend() {
                 drop(state);
                 main_frame.log(
                     "Speech output is unavailable. Announcements appear in the status bar and \
@@ -205,6 +205,10 @@ impl MainFrame {
             main_frame.refresh_local(None);
             main_frame.log("Settings reloaded from the copied files.");
         }
+
+        // After migration, so a copied choice is not asked about again, and
+        // before anything is announced. The question itself is not spoken.
+        super::dialogs::speech_prompt::offer(&main_frame);
 
         main_frame.local.focus();
         main_frame

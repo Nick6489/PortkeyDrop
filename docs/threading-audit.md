@@ -27,8 +27,8 @@ successful downloads byte-for-byte. They run headlessly on Linux and Windows.
 Validation commands:
 
 - `cargo fmt --all --check`
-- `cargo test -p portkeydrop-core -p prism -p prism-sys --locked`
-- `cargo clippy -p portkeydrop-core -p prism -p prism-sys --all-targets --locked`
+- `cargo test -p portkeydrop-core --locked`
+- `cargo clippy -p portkeydrop-core --all-targets --locked`
 - Windows CI: `cargo test --workspace` and workspace Clippy.
 
 UI state and event modules were additionally compiled and tested in a temporary

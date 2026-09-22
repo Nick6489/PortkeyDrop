@@ -21,8 +21,9 @@ cargo fmt                      # Format
 |---|---|
 | `portkeydrop` | wxWidgets front end (wxDragon): window, panes, dialogs |
 | `portkeydrop-core` | Protocols, transfers, settings, sites, sound packs, updates |
-| `prism` | Safe wrapper over the Prism speech library |
-| `prism-sys` | Raw FFI to Prism's C API; platform binaries vendored under `vendor/` |
+
+Speech goes through the `prismer` crate, which builds the Prism C++ library.
+There is no in-tree Prism binding.
 
 `portkeydrop-core` never depends on the UI, so protocol parsing, transfer rules,
 and credential handling are tested without a display.

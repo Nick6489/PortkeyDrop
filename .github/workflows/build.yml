@@ -156,7 +156,10 @@ jobs:
           # The installer script expects this capitalisation; cargo emits the
           # crate name in lower case.
           cp target/release/portkeydrop.exe dist/PortkeyDrop_dir/PortkeyDrop.exe
-          cp target/release/prism.dll dist/PortkeyDrop_dir/prism.dll
+          # Prism is linked into the executable. Its licence still has to
+          # travel with the program.
+          cp installer/third-party/PRISM-LICENSE dist/PortkeyDrop_dir/PRISM-LICENSE
+          cp installer/third-party/PRISM-NOTICE dist/PortkeyDrop_dir/PRISM-NOTICE
           {
             echo "[version]"
             echo "value=${{ needs.prepare.outputs.version }}"
@@ -209,9 +212,7 @@ jobs:
         run: |
           test -f "dist/PortkeyDrop_Setup_v${{ needs.prepare.outputs.version }}.exe"
           test -f "dist/PortkeyDrop_Portable_v${{ needs.prepare.outputs.version }}.zip"
-          # A build without the speech library runs mute, and a screen reader
-          # user has no way to tell until they launch it.
-          test -f dist/PortkeyDrop_dir/prism.dll
+          test -f dist/PortkeyDrop_dir/PRISM-LICENSE
           ls -la dist
 
       - uses: actions/upload-artifact@v7
@@ -279,20 +280,15 @@ jobs:
             target/aarch64-apple-darwin/release/portkeydrop \
             target/x86_64-apple-darwin/release/portkeydrop
 
-          # The loader looks beside the executable and then in
-          # ../Frameworks, which is where a bundle keeps its libraries.
-          lipo -create -output "$APP/Contents/Frameworks/libprism.dylib" \
-            crates/prism-sys/vendor/macos-aarch64/libprism.dylib \
-            crates/prism-sys/vendor/macos-x86_64/libprism.dylib
-
           sed -e "s|<string>0\.0\.0</string>|<string>${VERSION}</string>|g" \
             installer/macos/Info.plist > "$APP/Contents/Info.plist"
           plutil -lint "$APP/Contents/Info.plist"
 
-          # Prism is MPL-2.0; its licence ships inside the bundle.
+          # Prism is MPL-2.0 and linked into the executable. Its licence
+          # ships inside the bundle.
           mkdir -p "$APP/Contents/Resources"
-          cp crates/prism-sys/vendor/licenses/LICENSE "$APP/Contents/Resources/PRISM-LICENSE"
-          cp crates/prism-sys/vendor/licenses/NOTICE "$APP/Contents/Resources/PRISM-NOTICE"
+          cp installer/third-party/PRISM-LICENSE "$APP/Contents/Resources/PRISM-LICENSE"
+          cp installer/third-party/PRISM-NOTICE "$APP/Contents/Resources/PRISM-NOTICE"
 
           # An unsigned bundle copied out of a DMG is quarantined; ad-hoc
           # signing at least keeps it launchable without Gatekeeper refusing
@@ -308,12 +304,10 @@ jobs:
           # Read the output rather than piping it: steps run with pipefail,
           # and `grep -q` closing the pipe early makes the producer fail.
           executable_arches=$(lipo -info "$APP/Contents/MacOS/PortkeyDrop")
-          library_arches=$(lipo -info "$APP/Contents/Frameworks/libprism.dylib")
           echo "$executable_arches"
-          echo "$library_arches"
           [[ "$executable_arches" == *"x86_64 arm64"* ]]
-          [[ "$library_arches" == *"x86_64 arm64"* ]]
           test -f "$APP/Contents/Info.plist"
+          test -f "$APP/Contents/Resources/PRISM-LICENSE"
 
       - name: Build the disk image
         env:
@@ -376,7 +370,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libasound2-dev libdbus-1-dev pkg-config cmake \
-            libssl-dev file desktop-file-utils
+            libssl-dev file desktop-file-utils \
+            libspeechd-dev libglibmm-2.68-dev
 
       - name: Build
         run: cargo build --release --locked
@@ -385,10 +380,11 @@ jobs:
         run: |
           mkdir -p dist/PortkeyDrop
           cp target/release/portkeydrop dist/PortkeyDrop/PortkeyDrop
-          # No speech library here. Prism's Linux build bundles its own glib,
-          # which clashes with the system one: duplicate GObject type
-          # registration, then an abort or a segfault. Orca reads the interface
-          # through AT-SPI regardless.
+          # Prism is linked into the executable and uses the system glib,
+          # not a private copy. Orca and speech-dispatcher are built in when
+          # their development packages are present.
+          cp installer/third-party/PRISM-LICENSE dist/PortkeyDrop/PRISM-LICENSE
+          cp installer/third-party/PRISM-NOTICE dist/PortkeyDrop/PRISM-NOTICE
 
       - name: Build the tarball
         env:

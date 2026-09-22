@@ -100,6 +100,11 @@ fn the_site_manager_access_keys_are_unique() {
 }
 
 #[test]
+fn the_spoken_progress_prompt_access_keys_are_unique() {
+    assert_unique("speech_prompt.rs");
+}
+
+#[test]
 fn the_settings_access_keys_are_unique_within_each_page() {
     // Settings is a notebook. Only one page shows at a time, so two pages may
     // reuse a letter without competing -- checking the file as a whole would

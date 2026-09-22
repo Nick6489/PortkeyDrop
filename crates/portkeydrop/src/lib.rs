@@ -6,4 +6,5 @@
 pub mod cli;
 pub mod console;
 pub mod single_instance;
+pub mod speech;
 pub mod ui;

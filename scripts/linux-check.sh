@@ -41,14 +41,14 @@ echo
 
 echo "=== clippy (the Core job's command) ==="
 RUSTFLAGS="-D warnings" cargo clippy \
-	-p portkeydrop-core -p prism -p prism-sys --all-targets
+	-p portkeydrop-core --all-targets
 clippy_status=$?
 
 echo
 echo "=== tests ==="
 # Fewer tests run here than on Windows: the credential tests covering the
 # Windows Credential Manager naming are cfg(windows).
-cargo test -p portkeydrop-core -p prism -p prism-sys
+cargo test -p portkeydrop-core
 test_status=$?
 
 echo

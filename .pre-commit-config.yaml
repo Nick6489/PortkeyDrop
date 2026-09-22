@@ -6,16 +6,10 @@ repos:
     rev: v4.5.0
     hooks:
     -   id: trailing-whitespace
-        # The vendored Prism libraries are binaries; rewriting bytes inside
-        # one would ship a library that cannot load.
-        exclude: ^crates/prism-sys/vendor/
     -   id: end-of-file-fixer
-        exclude: ^crates/prism-sys/vendor/
     -   id: check-yaml
     -   id: check-merge-conflict
     -   id: check-added-large-files
-        # The vendored speech libraries are legitimately large.
-        args: [--maxkb=6000]
 
 # Ruff linted src/ and tests/, which are gone with the Python application.
 # The Rust equivalents run through cargo rather than pre-commit, so they see

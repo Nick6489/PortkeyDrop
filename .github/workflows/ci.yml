@@ -142,10 +142,10 @@ jobs:
     # tested here have no UI dependency by design, so they give fast feedback
     # on protocol parsing, transfer rules, and credential handling.
     - name: Clippy
-      run: cargo clippy -p portkeydrop-core -p prism -p prism-sys --all-targets
+      run: cargo clippy -p portkeydrop-core --all-targets
 
     - name: Test
-      run: cargo test -p portkeydrop-core -p prism -p prism-sys
+      run: cargo test -p portkeydrop-core
 
   app:
     name: App (Windows)

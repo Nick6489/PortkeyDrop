@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use wxdragon::prelude::*;
 
-use portkeydrop_core::settings::{overwrite_mode, Settings};
+use portkeydrop_core::settings::{overwrite_mode, speech_backend, Settings};
 use portkeydrop_core::sound_events::SOUND_EVENT_SECTIONS;
 
 use crate::ui::main_frame::MainFrame;
@@ -58,6 +58,19 @@ const DATE_FORMAT_CHOICES: [(&str, &str); 2] = [
     ),
 ];
 
+/// Where announcements go.
+const SPEECH_BACKEND_CHOICES: [(&str, &str); 3] = [
+    (speech_backend::OFF, "Off"),
+    (
+        speech_backend::SCREEN_READER,
+        "Only when a screen reader is running",
+    ),
+    (
+        speech_backend::AUTOMATIC,
+        "Automatic, including a voice if no screen reader is running",
+    ),
+];
+
 /// How much Portkey Drop says while a transfer runs.
 const VERBOSITY_CHOICES: [(&str, &str); 3] = [
     ("minimal", "Only when a transfer finishes"),
@@ -87,7 +100,7 @@ pub fn show(frame: &MainFrame) {
     let connection = build_connection_page(&notebook, &settings);
     notebook.add_page(&connection.panel, "&Connection", false, None);
 
-    let speech = build_speech_page(&notebook, &settings);
+    let speech = build_speech_page(&notebook, &settings, frame);
     notebook.add_page(&speech.panel, "&Speech", false, None);
 
     let audio = build_audio_page(&notebook, &settings, frame);
@@ -436,16 +449,45 @@ fn build_connection_page(notebook: &Notebook, settings: &Settings) -> Page {
     }
 }
 
-fn build_speech_page(notebook: &Notebook, settings: &Settings) -> Page {
+fn build_speech_page(notebook: &Notebook, settings: &Settings, frame: &MainFrame) -> Page {
     let (panel, sizer) = page(notebook);
 
     let note = StaticText::builder(&panel)
         .with_label(
-            "Screen readers follow their own speech settings. These apply only when Portkey \
-             Drop is speaking through a text-to-speech voice of its own.",
+            "Off speaks nothing. A screen reader keeps its own rate and volume. \
+             A voice of Portkey Drop's own uses the settings below.",
         )
         .build();
     sizer.add(&note, 0, SizerFlag::Left | SizerFlag::All, 6);
+
+    let backend = labelled(
+        &panel,
+        &sizer,
+        "Speech &backend:",
+        "Speech backend",
+        |panel| Choice::builder(panel).build(),
+    );
+    fill_choice(
+        &backend,
+        &SPEECH_BACKEND_CHOICES,
+        settings.speech.backend_preference(),
+    );
+
+    let (in_use, accepts_rate, accepts_volume) = {
+        let state = frame.state.borrow();
+        let in_use = match state.announcer.backend_name() {
+            Some(name) => format!("Prism is using {name}."),
+            None => "No speech backend is available.".to_string(),
+        };
+        (
+            in_use,
+            state.announcer.accepts_rate(),
+            state.announcer.accepts_volume(),
+        )
+    };
+    let using = StaticText::builder(&panel).with_label(&in_use).build();
+    using.set_name("Speech backend in use");
+    sizer.add(&using, 0, SizerFlag::Left | SizerFlag::All, 6);
 
     let rate = labelled(&panel, &sizer, "Speech &rate:", "Speech rate", |panel| {
         Slider::builder(panel)
@@ -469,6 +511,14 @@ fn build_speech_page(notebook: &Notebook, settings: &Settings) -> Page {
     );
     volume.set_value(settings.speech.volume);
 
+    // Windows is the platform where a screen reader and a system voice are
+    // both common, and only the voice honours these sliders. Mac and Linux
+    // leave them available until those backends are sorted out the same way.
+    if cfg!(windows) {
+        rate.enable(accepts_rate);
+        volume.enable(accepts_volume);
+    }
+
     let verbosity = labelled(
         &panel,
         &sizer,
@@ -481,8 +531,15 @@ fn build_speech_page(notebook: &Notebook, settings: &Settings) -> Page {
     panel.set_sizer(sizer, true);
 
     let apply = {
-        let (rate, volume, verbosity) = (rate, volume, verbosity);
+        let (backend, rate, volume, verbosity) = (backend, rate, volume, verbosity);
         move |settings: &mut Settings| {
+            let next = choice_value(&backend, &SPEECH_BACKEND_CHOICES);
+            // Saving an unchanged default must not count as opting into a
+            // system voice. Only a deliberate change does.
+            if next != settings.speech.backend {
+                settings.speech.backend_chosen = true;
+            }
+            settings.speech.backend = next;
             settings.speech.rate = rate.get_value();
             settings.speech.volume = volume.get_value();
             settings.speech.verbosity = choice_value(&verbosity, &VERBOSITY_CHOICES);
@@ -712,6 +769,22 @@ mod tests {
     }
 
     #[test]
+    fn the_speech_backend_picker_can_turn_speech_off() {
+        let offered: Vec<&str> = SPEECH_BACKEND_CHOICES
+            .iter()
+            .map(|(value, _)| *value)
+            .collect();
+        assert_eq!(
+            offered,
+            vec![
+                speech_backend::OFF,
+                speech_backend::SCREEN_READER,
+                speech_backend::AUTOMATIC,
+            ]
+        );
+    }
+
+    #[test]
     fn the_spoken_detail_labels_say_what_each_level_does() {
         // "Minimal" on its own does not tell someone what they will stop
         // hearing, and this picker is read aloud rather than seen.
@@ -729,6 +802,7 @@ mod tests {
             &PROTOCOL_CHOICES[..],
             &DATE_FORMAT_CHOICES[..],
             &VERBOSITY_CHOICES[..],
+            &SPEECH_BACKEND_CHOICES[..],
         ] {
             for (value, label) in entries {
                 assert!(!label.is_empty(), "{value} has no label");

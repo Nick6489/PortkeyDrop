@@ -40,8 +40,7 @@ themselves unless `PORTKEYDROP_TEST_SSHD=host:port` is set.
 
 ## CI shape
 
-- **Core (Ubuntu)** runs clippy and tests for `portkeydrop-core`, `prism`,
-  `prism-sys` only. It needs ALSA and D-Bus dev packages even without a UI:
+- **Core (Ubuntu)** runs clippy and tests for `portkeydrop-core` only. It needs ALSA and D-Bus dev packages even without a UI:
   rodio and the keyring crate link them.
 - **App (Windows)** runs clippy and tests for the whole workspace, including
   the wxWidgets front end. macOS and Linux front ends are only compiled by the
@@ -72,8 +71,9 @@ own line in the commit.
 |---|---|
 | `portkeydrop` | wxWidgets front end (wxDragon): window, panes, dialogs, CLI flags, single-instance |
 | `portkeydrop-core` | Protocols, transfers, settings, sites, credentials, sound packs, updater, importers |
-| `prism` | Safe wrapper over the Prism speech library |
-| `prism-sys` | Raw FFI to Prism's C API; platform binaries vendored under `vendor/` and loaded at run time |
+
+Speech goes through the `prismer` crate, which builds the Prism C++ library.
+There is no in-tree Prism binding.
 
 `portkeydrop-core` never depends on the UI and is synchronously callable, so
 protocol parsing, transfer rules, and credential handling are tested without
@@ -134,8 +134,7 @@ downloads are checksum-verified and deleted on mismatch.
 test, so keep them in sync when renaming: the single-instance mutex name and
 `AppMutex` in `installer/portkeydrop.iss` (`installer_mutex.rs`); release asset
 names in `build.yml` and `select_asset` in the updater (`release_assets.rs`);
-the vendored Prism library per platform (`vendored_libraries.rs`); and unique
-Alt+letter mnemonics per dialog (`dialog_mnemonics.rs`).
+and unique Alt+letter mnemonics per dialog (`dialog_mnemonics.rs`).
 
 ## Branch Strategy
 
