@@ -239,6 +239,8 @@ jobs:
     if: needs.prepare.outputs.should_build == 'true'
     runs-on: macos-latest
     env:
+      # Keep Rust and Prism's C++ objects on the same deployment target.
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
       # Which nightly this is. Without it the updater cannot tell one
       # nightly from another -- they share the version of the release
       # before them -- and offers the build already installed.
@@ -341,7 +343,7 @@ jobs:
     name: Linux
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       # Which nightly this is. Without it the updater cannot tell one
       # nightly from another -- they share the version of the release
@@ -373,9 +375,8 @@ jobs:
           shared-key: ${{ runner.os }}
 
       # wxdragon-sys builds wxWidgets from source, which needs GTK's headers.
-      # Built on 22.04 rather than latest so the result runs on older glibc:
-      # a binary linked against a newer one will not start on a distro that
-      # ships an older release, and there is no useful error when it does not.
+      # Prism's Orca backend needs glibmm 2.68, available on Ubuntu 24.04.
+      # This is the minimum Linux build baseline for modern dependencies.
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -438,12 +439,8 @@ jobs:
           [[ "$contents" == *"PortkeyDrop/PortkeyDrop"* ]]
           ls -la dist/*.tar.gz dist/*.AppImage
 
-      # Built but not published. The executable links libtiff.so.5 from the
-      # 22.04 build host, and 24.04 onwards ships libtiff6, so it will not
-      # start on a current distro; the AppImage bundles no GTK either, where a
-      # real one would carry its dependencies. Established by launching the
-      # tarball under WSLg. The job still runs so the build keeps being
-      # checked -- it is the download that is held back.
+      # Built but not published until the AppImage's dependency bundling is
+      # verified. Moving the build baseline does not complete that work.
       #
       # Set the repository variable PUBLISH_LINUX to "true" to ship it again.
       - uses: actions/upload-artifact@v7
