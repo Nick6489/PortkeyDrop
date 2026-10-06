@@ -30,6 +30,9 @@ pulldown-cmark = { version = "0.13", default-features = false }
 [dev-dependencies]
 tempfile.workspace = true
 
+[build-dependencies]
+pkg-config = "0.3"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

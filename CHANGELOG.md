@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 ### Changed
+- Linux builds now use Ubuntu 24.04 as their baseline so modern speech dependencies can be built. Linux downloads remain paused while packaging is verified.
 - Updated the speech engine to Prismer 0.1.4 and its newer Prism, bringing upstream speech fixes to every platform. Prism is built into the application, so Windows portable copies do not need a separate Prism DLL.
 - Speech no longer starts through a system voice just because no screen reader is running. On launch, if no screen reader is there, Portkey Drop asks whether to turn spoken progress messages on. That question is not spoken, No is the default, and the answer is saved. Settings, on the Speech page, can turn speech off entirely, limit it to a screen reader, or allow a voice when no screen reader is running. On Windows, speech rate and volume can be changed only when the voice in use accepts them, such as SAPI or OneCore. A screen reader keeps its own.
 
