@@ -163,6 +163,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prism_initializes_without_an_external_library() {
+        // No screen reader or voice is required: creating the context alone
+        // verifies that the statically linked engine starts on this platform.
+        let _prism = Prism::new().expect("the bundled Prism engine should initialize");
+    }
+
+    #[test]
     fn percent_to_fraction_clamps_and_scales() {
         assert_eq!(percent_to_fraction(0), 0.0);
         assert_eq!(percent_to_fraction(50), 0.5);

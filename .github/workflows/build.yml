@@ -150,6 +150,17 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      - name: Verify Prism is statically linked
+        shell: pwsh
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin was not found' }
+          $dependencies = & $dumpbin.FullName /DEPENDENTS target/release/portkeydrop.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect executable dependencies' }
+          if ($dependencies -match '(?i)\bprism[^\s]*\.dll\b') { throw 'Portable executable depends on an external Prism DLL' }
+          $dependencies
+
       - name: Stage the install tree
         run: |
           mkdir -p dist/PortkeyDrop_dir
