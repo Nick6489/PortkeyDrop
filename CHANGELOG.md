@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 ### Changed
+- Updated the speech engine to Prismer 0.1.4 and its newer Prism, bringing upstream speech fixes to every platform. Prism is built into the application, so Windows portable copies do not need a separate Prism DLL.
 - Speech no longer starts through a system voice just because no screen reader is running. On launch, if no screen reader is there, Portkey Drop asks whether to turn spoken progress messages on. That question is not spoken, No is the default, and the answer is saved. Settings, on the Speech page, can turn speech off entirely, limit it to a screen reader, or allow a voice when no screen reader is running. On Windows, speech rate and volume can be changed only when the voice in use accepts them, such as SAPI or OneCore. A screen reader keeps its own.
 
 - Portkey Drop is now a native application written in Rust rather than Python. The Windows download is about a fifth of the size it was (7 MB portable, down from 36 MB) and starts without unpacking a bundled interpreter first. Everything it did before it still does: SFTP, FTP, FTPS, and WebDAV, the same keyboard shortcuts, the same sound packs, and the same saved sites and passwords, which are read from where the previous version left them.
