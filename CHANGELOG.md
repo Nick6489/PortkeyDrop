@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - A "Waiting to connect" cue now loops while an SFTP connection is held up waiting for your SSH agent to approve the key. Agents such as Bitwarden show that approval in a box that can open behind the Portkey Drop window with nothing to say it is there; the sound fills that gap and stops the moment the connection succeeds or fails. Give it a sound by adding a `connect_waiting` entry to a sound pack, and mute it in Settings like any other cue.
 
 ### Fixed
+- File commands now follow the local or remote pane when you move between its list and path field, and remember that pane while you use menus or the activity log.
 - Update checks and download links now use the project's new home at Nick6489/PortkeyDrop, and the Windows installer identifies the new publisher.
 - An SFTP download that reaches EOF before receiving the server's reported size now fails with an expected-versus-received byte count instead of appearing complete. Its partial file remains available for retry in the same queue entry. Resumed downloads are checked too, and files whose size is unknown remain supported.
 - Repeating an upload or download command while that transfer is queued or running no longer creates another job for the same source and destination on the same connection. Retrying an older job also checks for an active copy first.

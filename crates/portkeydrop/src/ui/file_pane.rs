@@ -182,9 +182,9 @@ impl FilePane {
         }
     }
 
-    /// Whether this pane's list currently has focus.
+    /// Whether focus is in either control belonging to this file pane.
     pub fn has_focus(&self) -> bool {
-        self.list.has_focus()
+        self.list.has_focus() || self.path_bar.has_focus()
     }
 
     /// The current directory.

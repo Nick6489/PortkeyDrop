@@ -9,7 +9,7 @@
 //! timer drains them, which is what keeps the window responsive during a slow
 //! listing or a large transfer.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -48,6 +48,7 @@ pub struct MainFrame {
     pub frame: Frame,
     pub(super) local: Rc<FilePane>,
     pub(super) remote: Rc<FilePane>,
+    last_file_side: Rc<Cell<Side>>,
     pub(super) activity_log: TextCtrl,
     pub(super) status_bar: StatusBar,
     pub(super) quick_connect: Rc<QuickConnectBar>,
@@ -158,6 +159,7 @@ impl MainFrame {
             frame,
             local,
             remote,
+            last_file_side: Rc::new(Cell::new(Side::Local)),
             activity_log,
             status_bar,
             quick_connect,
@@ -565,6 +567,20 @@ impl MainFrame {
     fn bind_pane(&self, side: Side) {
         let pane = self.pane(side);
 
+        // Track keyboard focus, not row focus: a background list refresh can
+        // restore a focused row even while the user is in the opposite pane.
+        let remember_side = || {
+            let last = Rc::clone(&self.last_file_side);
+            move |event: wxdragon::event::Event| {
+                last.set(side);
+                event.skip(true);
+            }
+        };
+        pane.list
+            .bind_internal(EventType::SET_FOCUS, remember_side());
+        pane.path_bar
+            .bind_internal(EventType::SET_FOCUS, remember_side());
+
         // Enter opens a directory or transfers a file.
         let this = self.clone();
         pane.list
@@ -612,10 +628,14 @@ impl MainFrame {
     /// has, so it is the one that matters most.
     fn bind_context_menu(&self) {
         let this = self.clone();
-        self.frame.on_context_menu(move |_| {
+        self.frame.on_context_menu(move |event| {
             if let Some(side) = this.focused_side() {
-                this.show_pane_context_menu(side);
+                if this.pane(side).list.has_focus() {
+                    this.show_pane_context_menu(side);
+                    return;
+                }
             }
+            event.skip(true);
         });
     }
 
@@ -1061,9 +1081,10 @@ impl MainFrame {
         }
     }
 
-    /// The pane a command applies to, defaulting to local.
+    /// Menus and the activity log retain the last file pane as command target.
     pub(super) fn active_side(&self) -> Side {
-        self.focused_side().unwrap_or(Side::Local)
+        self.focused_side()
+            .unwrap_or_else(|| self.last_file_side.get())
     }
 
     pub(super) fn refresh_local(&self, path: Option<&Path>) {
@@ -1305,7 +1326,7 @@ impl MainFrame {
             // put and focus simply moves out of it.
             self.announce("Quick connect");
         }
-        self.local.focus();
+        self.pane(self.active_side()).focus();
     }
 
     /// Show the context menu for a pane.
